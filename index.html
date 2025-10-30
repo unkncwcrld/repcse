@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>repcse v001</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+      overflow-y: auto;
+      background: #fafafa;
+      color: #222;
+    }
+    #app {
+      width: 450px;
+      min-height: 100vh;
+      margin: auto;
+      padding: 10px;
+    }
+    a { color: #0066cc; text-decoration: none; margin: 0 5px; }
+    a:hover { text-decoration: underline; }
+    h3, h4, h5 { margin: 10px 0 5px 0; }
+    hr { border: none; border-top: 1px solid #ccc; margin: 10px 0; }
+    #footer { height:150px; overflow:auto; padding:4px; background:#fff; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h3>repcse</h3>
+    <div id="clock"></div>
+    <div id="notice">Welcome! Register to become a citizen.</div>
+    <hr/>
+
+    <!-- Registration -->
+    <div id="registerArea">
+      <label>Name: <input id="nameInput" /></label><br/>
+      <a href="#" id="registerBtn">Register as Citizen</a>
+    </div>
+
+    <!-- Citizen Area -->
+    <div id="citizenArea" hidden>
+      <div id="status"></div>
+
+      <div id="menulink" style="margin-top:10px;">
+        <b>Menulink</b><br/>
+        <a href="#" data-action="jobs">Job</a> |
+        <a href="#" data-action="activity">Activity</a> |
+        <a href="#" data-action="education">Education</a>
+      </div>
+
+      <div id="mainPanel" style="margin-top:10px;"></div>
+    </div>
+
+    <hr/>
+    <div><b>Log</b> (latest on top)</div>
+    <div id="footer"></div>
+  </div>
+
+  <!-- Load jobs list (external file) -->
+  <script src="jobs.js"></script>
+
+<script>
+(function(){
+  const state = {
+    registered: false,
+    name: '',
+    money: 50.00,
+    job: null,
+    taxRate: 0.10,
+    lastWork: null,
+    birth: null,
+    educationLevel: 0,
+    educationStart: null,
+    educationFinish: null,
+    lastTaxChange: null
+  };
+
+  function $(id){ return document.getElementById(id); }
+  function save(){ localStorage.setItem('repcse_st', JSON.stringify(state)); }
+  function load(){
+    const raw = localStorage.getItem('repcse_st');
+    if(raw){ try{ Object.assign(state, JSON.parse(raw)); } catch(e){} }
+  }
+  function formatMoney(v){ return v.toFixed(2); }
+  function log(msg){
+    const now = new Date();
+    const entry = document.createElement('div');
+    entry.textContent = `[${now.toLocaleString('en-GB',{hour12:false})}] ${msg}`;
+    $('footer').prepend(entry);
+  }
+
+  // === TAX SYSTEM ===
+  function updateTaxRateIfNeeded(){
+    const now = new Date();
+    const last = state.lastTaxChange ? new Date(state.lastTaxChange) : null;
+    const sevenDays = 7 * 24 * 3600 * 1000;
+    if(!last || now - last >= sevenDays){
+      const newRate = +(0.07 + Math.random() * (0.28 - 0.07)).toFixed(3);
+      state.taxRate = newRate;
+      state.lastTaxChange = now.toISOString();
+      save();
+      log(`📊 New tax rate applied: ${(newRate * 100).toFixed(1)}%`);
+    }
+  }
+
+  function escapeHtml(s){ return String(s).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  // === STATUS PANEL ===
+  function renderStatus(){
+    if(!state.registered){
+      $('notice').textContent = 'Not registered yet.';
+      $('citizenArea').hidden = true;
+      $('registerArea').hidden = false;
+      return;
+    }
+
+    $('notice').textContent = 'You are a citizen.';
+    $('registerArea').hidden = true;
+    $('citizenArea').hidden = false;
+
+    const nextWorkTime = getNextWorkTime();
+    const jobInfo = state.job ? state.job.title : '-';
+    const cooldownInfo = state.lastWork && nextWorkTime ?
+      `<br/>Next work available: ${nextWorkTime.toLocaleString('en-GB',{hour12:false})}` : '';
+    const birth = new Date(state.birth);
+    const days = Math.floor((Date.now() - birth.getTime()) / 86400000);
+    const eduBonus = state.educationLevel;
+    const eduFinish = state.educationFinish ? new Date(state.educationFinish).toLocaleString('en-GB',{hour12:false}) : '-';
+    const lastTax = state.lastTaxChange ? new Date(state.lastTaxChange).toLocaleString('en-GB',{hour12:false}) : '-';
+
+    // Salary info
+    let currentSalary = 0;
+    let netSalary = 0;
+    if(state.job){
+      currentSalary = +(state.job.wage * (1 + eduBonus/100)).toFixed(2);
+      netSalary = +(currentSalary * (1 - state.taxRate)).toFixed(2);
+    }
+
+    $('status').innerHTML = `
+      <h4>Citizen Status</h4>
+      Name: ${escapeHtml(state.name)}<br/>
+      Birth: ${birth.toLocaleString('en-GB',{hour12:false})}<br/>
+      Days: ${days}<br/>
+      Money: ${formatMoney(state.money)} cr<br/>
+      Job: ${jobInfo}<br/>
+      ${state.job ? `
+        Current Salary: ${formatMoney(currentSalary)} cr<br/>
+        Net Salary (after tax): ${formatMoney(netSalary)} cr<br/>
+      ` : ''}
+      Education Level: ${state.educationLevel}<br/>
+      Education Bonus: ${eduBonus}%<br/>
+      Tax Rate: ${(state.taxRate*100).toFixed(1)}%<br/>
+      Last Tax Change: ${lastTax}<br/>
+      Education Finish on: ${eduFinish}
+      ${cooldownInfo}
+    `;
+  }
+
+  // === REGISTRATION ===
+  function register(){
+    const name = $('nameInput').value.trim();
+    if(!name) return log('Enter a name before registering.');
+    const now = new Date();
+    const randomTax = +(0.07 + Math.random() * (0.28 - 0.07)).toFixed(3);
+    Object.assign(state, {
+      registered: true,
+      name,
+      money: 50.00,
+      job: null,
+      taxRate: randomTax,
+      lastWork: null,
+      birth: now.toISOString(),
+      educationLevel: 0,
+      educationStart: null,
+      educationFinish: null,
+      lastTaxChange: now.toISOString()
+    });
+    save(); renderStatus();
+    log(`Citizen ${name} registered with initial tax ${(randomTax*100).toFixed(1)}%.`);
+  }
+
+  // === JOB SYSTEM ===
+  function showJobs(){
+    const jobList = window.jobsList || [];
+    const p = $('mainPanel');
+    p.innerHTML = '<h5>Available Jobs</h5>';
+    jobList.forEach(j=>{
+      const a = document.createElement('a');
+      const days = j.days.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
+      a.href='#';
+      a.textContent = `${j.title} — Wage: ${formatMoney(j.wage)}/day (Days: ${days})`;
+      a.onclick = e => { e.preventDefault(); applyJob(j.id); };
+      p.appendChild(a);
+      p.appendChild(document.createElement('br'));
+    });
+  }
+
+  function applyJob(id){
+    if(state.job){ return log('You already have a job. Resign first to change.'); }
+    const j = (window.jobsList || []).find(x=>x.id===id);
+    if(!j) return;
+    state.job = { ...j };
+    save(); renderStatus();
+    $('mainPanel').innerHTML = `<div>You are now employed as ${j.title}.</div>`;
+    log(`Got job: ${j.title}.`);
+  }
+
+  function resignJob(){
+    if(!state.job) return log('No job to resign from.');
+    log(`Resigned from job: ${state.job.title}.`);
+    state.job = null;
+    save(); renderStatus();
+  }
+
+  function canWorkToday(job){ return job.days.includes(new Date().getDay()); }
+  function getNextWorkTime(){
+    if(!state.lastWork) return null;
+    return new Date(new Date(state.lastWork).getTime() + 86400000);
+  }
+
+  function workDay(){
+    if(!state.job) return log('No job. Apply for a job first.');
+    if(!canWorkToday(state.job)) return log(`You cannot work today.`);
+    const now = new Date();
+    if(state.lastWork){
+      const next = getNextWorkTime();
+      if(now < next){
+        return log(`You already worked today. Next: ${next.toLocaleString('en-GB',{hour12:false})}`);
+      }
+    }
+    checkEducationProgress();
+    const gross = state.job.wage * (1 + state.educationLevel/100);
+    const tax = +(gross * state.taxRate).toFixed(2);
+    const net = +(gross - tax).toFixed(2);
+    state.money = +(state.money + net).toFixed(2);
+    state.lastWork = now.toISOString();
+    save(); renderStatus();
+    log(`Worked as ${state.job.title}. Earned ${formatMoney(net)} (Tax ${formatMoney(tax)}).`);
+  }
+
+  // === ACTIVITY ===
+  function showActivity(){
+    const p = $('mainPanel');
+    p.innerHTML = `<h5>Activity</h5>
+      <a href="#" id="workBtn">Work</a><br/>
+      <a href="#" id="resignBtn">Resign</a>`;
+    $('workBtn').onclick = e => { e.preventDefault(); workDay(); };
+    $('resignBtn').onclick = e => { e.preventDefault(); resignJob(); };
+  }
+
+  // === EDUCATION ===
+  function showEducation(){
+    const p = $('mainPanel');
+    const level = state.educationLevel + 1;
+    const cost = 30 * level;
+    let html = `<h5>Education</h5>`;
+    if(state.educationFinish){
+      html += `<div>Currently enrolled in Level ${level}.<br/>Finishes on: ${new Date(state.educationFinish).toLocaleString('en-GB',{hour12:false})}<br/><a href="#" id="dropout">Dropout</a></div>`;
+    } else {
+      html += `<div>Next Level: ${level} (Cost: ${formatMoney(cost)} cr)<br/><a href="#" id="enroll">Enroll</a></div>`;
+    }
+    p.innerHTML = html;
+    if($('enroll')) $('enroll').onclick = e => { e.preventDefault(); enrollEducation(); };
+    if($('dropout')) $('dropout').onclick = e => { e.preventDefault(); dropoutEducation(); };
+  }
+
+  function enrollEducation(){
+    const nextLevel = state.educationLevel + 1;
+    if(nextLevel > 100) return log('Max education level reached.');
+    const cost = 30 * nextLevel;
+    if(state.money < cost) return log('Not enough money to enroll.');
+    const now = new Date();
+    state.money -= cost;
+    state.educationStart = now.toISOString();
+    state.educationFinish = new Date(now.getTime() + 3*24*3600*1000).toISOString();
+    save(); renderStatus();
+    log(`Enrolled in Education Level ${nextLevel}.`);
+    showEducation();
+  }
+
+  function dropoutEducation(){
+    state.educationStart = null;
+    state.educationFinish = null;
+    save(); renderStatus();
+    log('Dropped out from education.');
+    showEducation();
+  }
+
+  function checkEducationProgress(){
+    if(!state.educationFinish) return;
+    const now = new Date();
+    if(now >= new Date(state.educationFinish)){
+      state.educationLevel++;
+      log(`Completed Education Level ${state.educationLevel}!`);
+      state.educationStart = null;
+      state.educationFinish = null;
+      save(); renderStatus();
+    }
+  }
+
+  // === MENU HANDLER ===
+  document.addEventListener('click', e=>{
+    const el = e.target.closest('a[data-action]');
+    if(!el) return;
+    e.preventDefault();
+    const act = el.dataset.action;
+    if(act==='jobs') showJobs();
+    else if(act==='activity') showActivity();
+    else if(act==='education') showEducation();
+  });
+
+  $('registerBtn').onclick = e => { e.preventDefault(); register(); };
+
+  // === MAIN LOOP ===
+  setInterval(()=>{
+    const now = new Date();
+    $('clock').textContent = now.toLocaleString('en-GB',{hour12:false});
+    if(state.registered){
+      updateTaxRateIfNeeded();
+      checkEducationProgress();
+    }
+  }, 1000);
+
+  load(); 
+  if(state.registered) updateTaxRateIfNeeded();
+  renderStatus();
+  log('Demo loaded.');
+})();
+</script>
+</body>
+</html>
