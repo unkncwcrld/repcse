@@ -178,8 +178,6 @@ const jobsList = [
   { id: 'ngo_officer', title: 'NGO Officer', wage: 29.00, days: [1,2,3,4,5] },
   { id: 'community_manager', title: 'Community Manager', wage: 34.00, days: [1,2,3,4,5] },
 
-  { id: 'repcse', title: 'repcse', wage: 777777.00, days: [0,1,2,3,4,5,6] },
-
 ];
 
 // Export to main script
